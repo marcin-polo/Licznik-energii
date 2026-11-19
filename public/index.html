@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Licznik energii</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #fff; --text: #1d2330; --muted: #6b7280; --line: #e3e6eb;
+    --accent: #2563eb; --ok: #16a34a; --err: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11141a; --card: #1a1f28; --text: #e6e8ec; --muted: #9aa3af; --line: #2a313d;
+      --accent: #60a5fa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; flex: 1; }
+  .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.err { background: var(--err); }
+  .error { background: color-mix(in srgb, var(--err) 12%, var(--card)); border: 1px solid var(--err); color: var(--text);
+           padding: 8px 12px; border-radius: 8px; margin-bottom: 16px; display: none; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile .label { color: var(--muted); font-size: 12px; }
+  .tile .val { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .val small, td small { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+  .wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  td.total { font-weight: 600; }
+  h2 { font-size: 14px; color: var(--muted); font-weight: 500; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .04em; }
+  .chart-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .legend { display: flex; gap: 12px; font-size: 13px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 3px; margin-right: 5px; vertical-align: middle; background: var(--c); }
+  canvas { width: 100%; height: 220px; display: block; }
+  select { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 16px; }
+  [data-level] { background: color-mix(in srgb, var(--lvl) 28%, transparent); }
+  .tile[data-level] { border-color: var(--lvl); }
+  .screens { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .screens a { color: var(--accent); text-decoration: none; border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; font-size: 14px; }
+  .screens a:hover { border-color: var(--accent); }
+  .nav-link { color: var(--accent); font-size: 14px; text-decoration: none; }
+  .meta { color: var(--muted); font-size: 12px; text-align: center; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .meta a { color: inherit; }
+  .meta a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="title">Licznik energii</h1>
+    <a href="raport" class="nav-link">📊 Raport energii</a>
+    <div class="status"><span class="dot" id="dot"></span><span id="status">łączenie…</span></div>
+  </header>
+  <div class="error" id="error"></div>
+
+  <section class="hero" id="hero" style="margin-bottom:16px"></section>
+
+  <section class="card">
+    <div class="chart-head">
+      <h2>Moc czynna</h2>
+      <div class="legend" id="legend"></div>
+      <select id="window">
+        <option value="60">1 min</option>
+        <option value="300" selected>5 min</option>
+        <option value="900">15 min</option>
+        <option value="3600">1 h</option>
+      </select>
+    </div>
+    <canvas id="chart"></canvas>
+  </section>
+
+  <section class="card wrap"><table id="phases"></table></section>
+  <section class="grid" id="other"></section>
+
+  <section class="card screens" id="screens" hidden><h2 style="margin:0 8px 0 0">Pełny ekran</h2></section>
+
+  <footer class="meta"><span id="meta"></span><a href="raport">📊 Raport energii</a><a href="admin">⚙ Konfiguracja</a></footer>
+</main>
+
+<script src="common.js"></script>
+<script>
+const PHASES = [1, 2, 3, 'total'];
+const HERO = ['power_active_total', 'power_active_l1', 'power_active_l2', 'power_active_l3', 'energy_active_import', 'energy_active_export'];
+const CHART_KEYS = ['power_active_total', 'power_active_l1', 'power_active_l2', 'power_active_l3'];
+const $ = (id) => document.getElementById(id);
+const esc = MeterUI.escape;
+
+const history = new MeterHistory();
+const levelOf = MeterUI.levelTracker();
+let built = false, registers = {}, lastState = null;
+
+const fmt = (value, reg) => MeterUI.format(value, reg.precision);
+
+// Wyróżnienie tła wg progów z ustawień (poziom „normal” bez wyróżnienia).
+function highlight(el, key, value, display) {
+  if (!el) return;
+  const level = levelOf(key, value, display?.thresholds?.[key]);
+  const color = level !== 'normal' && MeterUI.color(level, display, key);
+  if (color) { el.dataset.level = level; el.style.setProperty('--lvl', color); }
+  else { delete el.dataset.level; }
+}
+const cell = (key, cls = '') => key ? `<td class="${cls}" id="v-${key}">–</td>` : `<td class="${cls}"></td>`;
+
+function build(state) {
+  registers = state.registers;
+  $('title').textContent = state.meter.name;
+  document.title = state.meter.name;
+
+  // Tabela faz: wiersz = grupa, kolumna = faza.
+  const rows = {};
+  const others = {};
+  for (const [key, reg] of Object.entries(registers)) {
+    if (reg.phase !== null) (rows[reg.group] ??= {})[reg.phase] = key;
+    else (others[reg.group] ??= []).push(key);
+  }
+  let html = '<thead><tr><th></th><th>L1</th><th>L2</th><th>L3</th><th>Σ / śr.</th></tr></thead><tbody>';
+  for (const [group, keys] of Object.entries(rows)) {
+    const unit = registers[Object.values(keys)[0]].unit;
+    html += `<tr><td>${group}${unit ? ` <small>${unit}</small>` : ''}</td>`
+      + PHASES.map((p) => cell(keys[p], p === 'total' ? 'total' : '')).join('') + '</tr>';
+  }
+  $('phases').innerHTML = html + '</tbody>';
+
+  $('other').innerHTML = Object.entries(others).map(([group, keys]) =>
+    `<div class="card"><h2>${group}</h2><table>${keys.map((k) =>
+      `<tr><td>${registers[k].label}</td><td id="v-${k}">–</td></tr>`).join('')}</table></div>`).join('');
+
+  $('hero').innerHTML = HERO.filter((k) => registers[k]).map((k) =>
+    `<div class="tile" id="t-${k}"><div class="label">${registers[k].label}</div><div class="val"><span id="h-${k}">–</span><small>${registers[k].unit}</small></div></div>`).join('');
+
+  $('legend').innerHTML = CHART_KEYS.filter((k) => registers[k]).map((k, i) =>
+    `<span style="--c:${MeterUI.seriesColor(k, i)}">${k.endsWith('_total') ? 'Σ' : k.slice(-2).toUpperCase()}</span>`).join('');
+
+  $('meta').innerHTML = `${state.meter.type} · ${state.meter.host}:${state.meter.port} · odczyt co ${state.interval} s · <a href="api.php">api.php</a>`;
+  built = true;
+}
+
+function render(state) {
+  const age = (state.server_time - state.updated_at) / 1000;
+  const stale = MeterUI.isStale(state);
+  const ok = state.ok && !stale;
+
+  $('dot').className = 'dot ' + (ok ? 'ok' : 'err');
+  $('status').textContent = state.updated_at
+    ? `${new Date(state.updated_at).toLocaleTimeString('pl-PL')}${state.read_ms !== null ? ` · ${Math.round(state.read_ms)} ms` : ''}`
+    : 'brak danych';
+  $('error').style.display = ok ? 'none' : 'block';
+  $('error').textContent = state.error || (stale ? `Dane nieaktualne (${Math.round(age)} s)` : '');
+  if (state.settings_error) { $('error').style.display = 'block'; $('error').textContent = state.settings_error; }
+
+  const screens = Object.entries(state.settings?.screens || {});
+  const links = screens.map(([n, d]) => `<a href="d/${esc(n)}" target="_blank">${esc(d.title || n)}</a>`).join('');
+  if (links !== $('screens').dataset.links) {
+    $('screens').dataset.links = links;
+    $('screens').innerHTML = '<h2 style="margin:0 8px 0 0">Pełny ekran</h2>' + links;
+    $('screens').hidden = !screens.length;
+  }
+
+  if (!state.values) return;
+  for (const [key, value] of Object.entries(state.values)) {
+    const text = fmt(value, registers[key]);
+    const td = $('v-' + key);
+    if (td) td.innerHTML = key in registers && registers[key].phase === null && registers[key].unit
+      ? `${text}<small>${registers[key].unit}</small>` : text;
+    const hero = $('h-' + key);
+    if (hero) hero.textContent = text;
+    highlight(td, key, value, state.settings);
+    highlight($('t-' + key), key, value, state.settings);
+  }
+
+  lastState = state;
+  if (state.ok && history.push(state.updated_at, state.values)) drawChart();
+}
+
+function drawChart() {
+  if (!lastState) return;
+  const css = getComputedStyle(document.documentElement);
+  drawMeterChart($('chart'), history, {
+    keys: CHART_KEYS.filter((k) => registers[k]),
+    windowMs: +$('window').value * 1000,
+    registers,
+    gapMs: lastState.interval * 3000 + 2000,
+    theme: { grid: css.getPropertyValue('--line').trim(), text: css.getPropertyValue('--muted').trim() },
+  });
+}
+
+async function poll() {
+  let interval = 1;
+  try {
+    const res = await fetch('api.php', { cache: 'no-store' });
+    const state = await res.json();
+    if (state.registers) {
+      if (!built) { build(state); await history.load(3600); }
+      render(state);
+      interval = state.interval;
+    } else {
+      throw new Error(state.error || 'Brak danych');
+    }
+  } catch (e) {
+    $('dot').className = 'dot err';
+    $('status').textContent = 'brak połączenia';
+    $('error').style.display = 'block';
+    $('error').textContent = e.message;
+  }
+  setTimeout(poll, Math.min(5000, Math.max(250, interval * 1000)));
+}
+
+$('window').addEventListener('change', drawChart);
+window.addEventListener('resize', drawChart);
+poll();
+</script>
+</body>
+</html>

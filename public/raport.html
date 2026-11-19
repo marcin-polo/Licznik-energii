@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raport energii</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #fff; --text: #1d2330; --muted: #6b7280; --line: #e3e6eb; --soft: #f0f2f5;
+    --accent: #2563eb; --imp: #3b82f6; --exp: #16a34a; --peak: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11141a; --card: #1a1f28; --text: #e6e8ec; --muted: #9aa3af; --line: #2a313d; --soft: #222833;
+      --accent: #60a5fa; --imp: #60a5fa; --exp: #22c55e; --peak: #f87171; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; flex: 1; }
+  h2 { font-size: 14px; color: var(--muted); font-weight: 500; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .04em; }
+  a { color: var(--accent); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 16px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: none; border-radius: 0; background: var(--card); padding: 6px 14px; }
+  .seg button.active { background: var(--accent); color: #fff; }
+  button, input { font: inherit; color: var(--text); }
+  button { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  input { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  input[type=number] { width: 90px; }
+  .spacer { flex: 1; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile .label { color: var(--muted); font-size: 12px; }
+  .tile .val { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .val small { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+  .tile .sub { color: var(--muted); font-size: 12px; }
+  .chart-wrap { position: relative; }
+  canvas { width: 100%; height: 280px; display: block; }
+  .tip { position: absolute; pointer-events: none; background: var(--text); color: var(--bg); font-size: 12px; padding: 6px 8px; border-radius: 6px; white-space: nowrap; display: none; z-index: 2; }
+  .legend { display: flex; gap: 14px; font-size: 13px; color: var(--muted); margin-bottom: 6px; flex-wrap: wrap; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
+  .wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 14px; }
+  th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  tr.empty td { color: var(--muted); }
+  tfoot td { font-weight: 600; border-top: 2px solid var(--line); }
+  details summary { cursor: pointer; color: var(--muted); }
+  .events li { margin-bottom: 4px; } .events time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  .lvl-alarm { color: var(--peak); } .lvl-warning { color: #b45309; }
+  .hint { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Raport energii</h1>
+    <a href="./">← Na żywo</a>
+  </header>
+
+  <div class="controls">
+    <div class="seg" id="kinds">
+      <button data-kind="day">Dzień</button><button data-kind="month">Miesiąc</button><button data-kind="year">Rok</button>
+    </div>
+    <button id="prev" title="Poprzedni">◀</button>
+    <span id="picker"></span>
+    <button id="next" title="Następny">▶</button>
+    <button id="today">Bieżący</button>
+    <span class="spacer"></span>
+    <a id="csv" href="#">⬇ CSV</a>
+  </div>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section class="card">
+    <h2 id="chart-title"></h2>
+    <div class="legend" id="legend"></div>
+    <div class="chart-wrap"><canvas id="chart"></canvas><div class="tip" id="tip"></div></div>
+  </section>
+
+  <section class="card wrap" id="table-card"></section>
+
+  <section class="card">
+    <h2>Zdarzenia w okresie</h2>
+    <ul class="events" id="events"></ul>
+  </section>
+</main>
+
+<script src="common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = MeterUI.escape;
+const MONTHS = ['styczeń', 'luty', 'marzec', 'kwiecień', 'maj', 'czerwiec', 'lipiec', 'sierpień', 'wrzesień', 'październik', 'listopad', 'grudzień'];
+const pad = (n) => String(n).padStart(2, '0');
+const fmtNum = (v, d = 2) => v === null || v === undefined ? '–' : v.toLocaleString('pl-PL', { minimumFractionDigits: d, maximumFractionDigits: d });
+const fmtTime = (ts, withDate) => ts ? new Date(ts * 1000).toLocaleString('pl-PL', withDate
+  ? { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' } : { hour: '2-digit', minute: '2-digit' }) : '';
+
+const params = new URLSearchParams(location.search);
+let kind = ['day', 'month', 'year'].includes(params.get('kind')) ? params.get('kind') : 'day';
+let date = params.get('date') || '';
+let report = null, bars = null;
+
+function todayFor(k) {
+  const d = new Date();
+  return k === 'day' ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : k === 'month' ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}` : String(d.getFullYear());
+}
+
+function shift(dir) {
+  if (kind === 'day') {
+    const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() + dir);
+    date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  } else if (kind === 'month') {
+    const [y, m] = date.split('-').map(Number); const d = new Date(y, m - 1 + dir, 1);
+    date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+  } else {
+    date = String(+date + dir);
+  }
+  load();
+}
+
+function renderControls() {
+  document.querySelectorAll('[data-kind]').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
+  const type = { day: 'date', month: 'month', year: 'number' }[kind];
+  $('picker').innerHTML = `<input type="${type}" id="date" value="${esc(date)}" ${kind === 'year' ? 'min="2000" max="2100"' : ''}>`;
+  $('date').addEventListener('change', (e) => { if (e.target.value) { date = e.target.value; load(); } });
+  $('csv').href = `api.php?report=${kind}&date=${encodeURIComponent(date)}&format=csv`;
+  history.replaceState(null, '', `?kind=${kind}&date=${encodeURIComponent(date)}`);
+}
+
+function periodTitle() {
+  if (kind === 'day') return new Date(date + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  if (kind === 'month') { const [y, m] = date.split('-'); return `${MONTHS[+m - 1]} ${y}`; }
+  return `rok ${date}`;
+}
+
+async function load() {
+  date ||= todayFor(kind);
+  renderControls();
+  try {
+    const res = await fetch(`api.php?report=${kind}&date=${encodeURIComponent(date)}`, { cache: 'no-store' });
+    report = await res.json();
+    if (!res.ok) throw new Error(report.error || res.statusText);
+  } catch (e) {
+    $('tiles').innerHTML = `<div class="card">Błąd: ${esc(e.message)}</div>`;
+    return;
+  }
+  renderTiles();
+  renderTable();
+  drawChart();
+  loadEvents();
+}
+
+function renderTiles() {
+  const t = report.totals, p = report.peak;
+  const net = t.e_imp === null && t.e_exp === null ? null : (t.e_imp || 0) - (t.e_exp || 0);
+  const min = report.period / 60;
+  const tiles = [
+    ['Energia pobrana', fmtNum(t.e_imp), 'kWh', ''],
+    ['Energia oddana', fmtNum(t.e_exp), 'kWh', ''],
+    ['Bilans (pobrana − oddana)', fmtNum(net), 'kWh', net === null ? '' : net < 0 ? 'nadwyżka oddana do sieci' : ''],
+    [`Szczyt mocy ${min}-min`, p ? fmtNum(p.w / 1000, 2) : '–', 'kW', p ? fmtTime(p.ts, kind !== 'day') : ''],
+    ['Energia bierna pobrana', fmtNum(t.q_imp, 1), 'kvarh', t.q_exp === null ? '' : `oddana ${fmtNum(t.q_exp, 1)} kvarh`],
+  ];
+  $('tiles').innerHTML = tiles.map(([l, v, u, s]) => `<div class="tile"><div class="label">${l}</div><div class="val">${v}<small>${u}</small></div><div class="sub">${esc(s)}&nbsp;</div></div>`).join('');
+}
+
+function renderTable() {
+  const day = kind === 'day';
+  const head = `<tr><th>${day ? 'Godzina' : kind === 'month' ? 'Dzień' : 'Miesiąc'}</th>${day ? '<th>Śr. moc [W]</th><th>Min [W]</th><th>Max [W]</th>' : ''}<th>Pobrana [kWh]</th><th>Oddana [kWh]</th><th>Bilans [kWh]</th>${day ? '' : '<th>Szczyt [kW]</th><th>Kiedy</th>'}</tr>`;
+  const rows = report.buckets.map((b) => {
+    const empty = b.e_imp === null && b.e_exp === null && b.p_avg === undefined;
+    const net = b.e_imp === null && b.e_exp === null ? null : (b.e_imp || 0) - (b.e_exp || 0);
+    const label = day ? b.label + (b.live ? ' (trwa)' : '') : kind === 'month' ? new Date(b.key + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'short', day: 'numeric', month: 'short' }) : MONTHS[+b.key.slice(5) - 1];
+    return `<tr class="${empty ? 'empty' : ''}"><td>${label}</td>${day ? `<td>${fmtNum(b.p_avg, 0)}</td><td>${fmtNum(b.p_min, 0)}</td><td>${fmtNum(b.p_max, 0)}</td>` : ''}<td>${fmtNum(b.e_imp)}</td><td>${fmtNum(b.e_exp)}</td><td>${fmtNum(net)}</td>${day ? '' : `<td>${b.peak === null ? '–' : fmtNum(b.peak / 1000)}</td><td>${fmtTime(b.peak_ts, kind === 'year')}</td>`}</tr>`;
+  }).join('');
+  const t = report.totals;
+  const foot = `<tr><td>Razem</td>${day ? '<td></td><td></td><td></td>' : ''}<td>${fmtNum(t.e_imp)}</td><td>${fmtNum(t.e_exp)}</td><td>${t.e_imp === null ? '–' : fmtNum((t.e_imp || 0) - (t.e_exp || 0))}</td>${day ? '' : `<td>${report.peak ? fmtNum(report.peak.w / 1000) : '–'}</td><td>${report.peak ? fmtTime(report.peak.ts, true) : ''}</td>`}</tr>`;
+  const table = `<table><thead>${head}</thead><tbody>${rows}</tbody><tfoot>${foot}</tfoot></table>`;
+  $('table-card').innerHTML = day ? `<details><summary>Tabela okresów ${report.period / 60}-min</summary>${table}</details>` : table;
+}
+
+// Wykres słupkowy: pobór w górę, oddawanie w dół.
+function drawChart() {
+  const css = getComputedStyle(document.documentElement);
+  const col = (n) => css.getPropertyValue(n).trim();
+  const day = kind === 'day';
+  const bk = report.buckets;
+  // Dzień: średnia moc okresu [kW]; miesiąc/rok: energia [kWh].
+  const up = bk.map((b) => day ? (b.p_avg ?? null) === null ? null : Math.max(0, b.p_avg) / 1000 : b.e_imp);
+  const down = bk.map((b) => day ? (b.p_avg ?? null) === null ? null : Math.min(0, b.p_avg) / 1000 : (b.e_exp === null ? null : -b.e_exp));
+  const unit = day ? 'kW' : 'kWh';
+  $('chart-title').textContent = (day ? `Średnia moc w okresach ${report.period / 60}-min` : 'Energia') + ' – ' + periodTitle();
+  $('legend').innerHTML = `<span style="--c:${col('--imp')}">${day ? 'pobór' : 'pobrana'}</span><span style="--c:${col('--exp')}">${day ? 'oddawanie' : 'oddana'}</span>`
+    + (day && report.peak ? `<span style="--c:${col('--peak')}">szczyt ${report.period / 60}-min</span>` : '');
+
+  const canvas = $('chart');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  let max = Math.max(0, ...up.filter((v) => v !== null)), min = Math.min(0, ...down.filter((v) => v !== null));
+  if (max === 0 && min === 0) max = 1;
+  const step = niceStep((max - min) / 5);
+  max = Math.ceil(max / step) * step; min = Math.floor(min / step) * step;
+
+  ctx.font = '11px system-ui, sans-serif';
+  const label = (v) => v.toLocaleString('pl-PL', { maximumFractionDigits: 2 }) + ' ' + unit;
+  const padL = Math.max(ctx.measureText(label(max)).width, ctx.measureText(label(min)).width) + 10;
+  const box = { l: padL, r: 6, t: 6, b: 20 };
+  const y = (v) => box.t + (max - v) / (max - min) * (h - box.t - box.b);
+  const slot = (w - box.l - box.r) / bk.length;
+
+  ctx.fillStyle = col('--muted'); ctx.strokeStyle = col('--line'); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let v = min; v <= max + step / 2; v += step) {
+    ctx.beginPath(); ctx.moveTo(box.l, Math.round(y(v)) + .5); ctx.lineTo(w - box.r, Math.round(y(v)) + .5); ctx.stroke();
+    ctx.fillText(label(v), box.l - 6, y(v));
+  }
+
+  const every = day ? Math.max(1, Math.round(bk.length / 12)) : kind === 'month' ? (w < 600 ? 3 : 1) : 1;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  bk.forEach((b, i) => {
+    const x = box.l + i * slot;
+    const bw = Math.max(1, slot * (day ? 0.85 : 0.7));
+    const x0 = x + (slot - bw) / 2;
+    const isPeak = day && report.peak && b.peak_ts === report.peak.ts;
+    if (up[i]) { ctx.fillStyle = isPeak ? col('--peak') : col('--imp'); ctx.globalAlpha = b.live ? .45 : 1; ctx.fillRect(x0, y(up[i]), bw, y(0) - y(up[i])); }
+    if (down[i]) { ctx.fillStyle = col('--exp'); ctx.globalAlpha = b.live ? .45 : 1; ctx.fillRect(x0, y(0), bw, y(down[i]) - y(0)); }
+    ctx.globalAlpha = 1;
+    if (i % every === 0) { ctx.fillStyle = col('--muted'); ctx.fillText(day ? b.label.replace(':00', '') : b.label, x + slot / 2, h - 5); }
+  });
+  ctx.strokeStyle = col('--muted'); ctx.beginPath(); ctx.moveTo(box.l, Math.round(y(0)) + .5); ctx.lineTo(w - box.r, Math.round(y(0)) + .5); ctx.stroke();
+  bars = { box, slot };
+}
+
+function tooltip(e) {
+  if (!bars || !report) return;
+  const rect = $('chart').getBoundingClientRect();
+  const i = Math.floor((e.clientX - rect.left - bars.box.l) / bars.slot);
+  const b = report.buckets[i];
+  const tip = $('tip');
+  if (!b) { tip.style.display = 'none'; return; }
+  let html;
+  if (kind === 'day') {
+    html = `<b>${b.label}${b.live ? ' (trwa)' : ''}</b><br>średnio ${fmtNum(b.p_avg, 0)} W · min ${fmtNum(b.p_min, 0)} · max ${fmtNum(b.p_max, 0)}<br>L1 ${fmtNum(b.p1_avg, 0)} · L2 ${fmtNum(b.p2_avg, 0)} · L3 ${fmtNum(b.p3_avg, 0)} W<br>pobrana ${fmtNum(b.e_imp, 3)} · oddana ${fmtNum(b.e_exp, 3)} kWh`;
+  } else {
+    const title = kind === 'month' ? new Date(b.key + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' }) : MONTHS[+b.key.slice(5) - 1];
+    html = `<b>${title}</b><br>pobrana ${fmtNum(b.e_imp)} kWh · oddana ${fmtNum(b.e_exp)} kWh${b.peak !== null ? `<br>szczyt ${fmtNum(b.peak / 1000)} kW (${fmtTime(b.peak_ts, kind === 'year')})` : ''}`;
+  }
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  const x = e.clientX - rect.left;
+  tip.style.left = Math.min(rect.width - tip.offsetWidth, Math.max(0, x - tip.offsetWidth / 2)) + 'px';
+  tip.style.top = (e.clientY - rect.top - tip.offsetHeight - 12) + 'px';
+}
+
+async function loadEvents() {
+  try {
+    const data = await (await fetch(`api.php?events&from=${report.from}&to=${report.to}&limit=200`, { cache: 'no-store' })).json();
+    $('events').innerHTML = data.events.length
+      ? data.events.map((e) => `<li class="lvl-${esc(e.level)}"><time>${fmtTime(e.ts, true)}</time>${esc(e.message)} <span class="hint">(${esc(e.delivery)})</span></li>`).join('')
+      : '<li class="hint">Brak zdarzeń.</li>';
+  } catch (e) {}
+}
+
+document.querySelectorAll('[data-kind]').forEach((b) => b.addEventListener('click', () => {
+  if (b.dataset.kind === kind) return;
+  // Zachowaj kontekst: z dnia do jego miesiąca/roku i odwrotnie (pierwszy dzień).
+  const base = date || todayFor(kind);
+  kind = b.dataset.kind;
+  date = kind === 'year' ? base.slice(0, 4) : kind === 'month' ? (base.length >= 7 ? base.slice(0, 7) : base + '-01') : (base.length === 10 ? base : todayFor('day').startsWith(base) ? todayFor('day') : (base.length === 7 ? base : base + '-01') + '-01');
+  load();
+}));
+$('prev').addEventListener('click', () => shift(-1));
+$('next').addEventListener('click', () => shift(1));
+$('today').addEventListener('click', () => { date = todayFor(kind); load(); });
+$('chart').addEventListener('mousemove', tooltip);
+$('chart').addEventListener('mouseleave', () => { $('tip').style.display = 'none'; });
+window.addEventListener('resize', () => report && drawChart());
+
+load();
+// Bieżący okres odświeżany co minutę.
+setInterval(() => { if (date === todayFor(kind)) load(); }, 60000);
+</script>
+</body>
+</html>

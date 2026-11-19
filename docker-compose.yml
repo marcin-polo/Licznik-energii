@@ -1,0 +1,31 @@
+x-app: &app
+  build: .
+  image: modbus-meter:latest
+  init: true
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false   # bez .env działają wartości domyślne z src/config.php
+  volumes:
+    - ./meters:/app/meters:ro
+    - ./config:/app/config
+    - ./data:/app/data
+    - state:/data
+
+services:
+  poller:
+    <<: *app
+    command: ["php", "bin/poller.php"]
+
+  web:
+    <<: *app
+    command: ["php", "-S", "0.0.0.0:8080", "-t", "public", "public/router.php"]
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+
+volumes:
+  # Stan i historia w RAM – zapis co sekundę nie zużywa dysku.
+  state:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs

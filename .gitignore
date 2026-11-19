@@ -1,0 +1,7 @@
+# Dane i konfiguracja lokalna – nie do repozytorium
+.env
+data/*
+!data/.gitkeep
+config/settings.json
+config/admin_password.txt
+*.tmp

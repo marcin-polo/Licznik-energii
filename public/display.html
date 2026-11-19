@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Pobór</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; user-select: none; }
+  body.idle { cursor: none; }
+  #screen { flex: 1; display: flex; flex-direction: column; gap: 2px; background: #1a1a1a; min-height: 0; }
+  .row { display: flex; gap: 2px; min-height: 0; }
+  .cell { background: #000; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 1.6vmin 2.4vmin; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .label { color: #8a8a8a; font-size: clamp(13px, 2.8vmin, 36px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 12px; color: #8a8a8a; font-size: clamp(11px, 1.8vmin, 20px); }
+  .legend span::before { content: ""; display: inline-block; width: .9em; height: .25em; margin-right: .35em; vertical-align: middle; background: var(--c); border-radius: 2px; }
+  .valbox { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; overflow: hidden; }
+  .value { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1; transition: color .3s; }
+  .unit { font-size: .3em; font-weight: 400; margin-left: .15em; opacity: .7; }
+  .bar { height: 1.1vmin; min-height: 5px; background: #1f1f1f; border-radius: 99px; overflow: hidden; flex-shrink: 0; }
+  .bar i { display: block; height: 100%; width: 0; border-radius: 99px; transition: width .4s, background-color .3s; }
+  canvas { flex: 1; min-height: 0; width: 100%; display: block; margin-top: 1vmin; }
+  .missing { color: #6b6b6b; font-size: 16px; }
+  footer { display: flex; justify-content: space-between; gap: 12px; padding: 6px 14px; color: #6b6b6b; font-size: clamp(12px, 1.8vmin, 20px); }
+  .dot { display: inline-block; width: .7em; height: .7em; border-radius: 50%; background: #555; margin-right: .4em; }
+  .dot.ok { background: #22c55e; } .dot.err { background: #ef4444; }
+  body.stale .value:not(.clock), body.stale .bar, body.stale canvas { opacity: .3; }
+  body.stale #status { color: #ef4444; }
+  #msg { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; text-align: center; padding: 24px; color: #aaa; font-size: 20px; background: #000; }
+  #msg a { color: #fff; }
+</style>
+</head>
+<body>
+<div id="screen"></div>
+<footer><span id="title"></span><span><span class="dot" id="dot"></span><span id="status">łączenie…</span></span></footer>
+<div id="msg"></div>
+
+<script src="../common.js"></script>
+<script>
+MeterHistory.base = '../';
+const $ = (id) => document.getElementById(id);
+const esc = MeterUI.escape;
+const params = new URLSearchParams(location.search);
+const name = decodeURIComponent((location.pathname.match(/\/d\/([^/]+)/) || [])[1] || '');
+const CHART_THEME = { grid: '#222', text: '#777' };
+
+const history = new MeterHistory();
+const levelOf = MeterUI.levelTracker();
+let signature = null;   // zmiana definicji ekranu w panelu admina = przebudowa
+let rows = [];          // [[cell, ...], ...]
+let lastState = null;
+
+function resolveScreen(settings) {
+  if (params.has('keys')) {
+    const keys = params.get('keys').split(',').filter(Boolean);
+    return { title: params.get('title') || '', rows: [{ height: 1, cells: keys.map((key) => ({ type: 'value', key, kw: params.has('kw'), bar: true, width: 1 })) }] };
+  }
+  const screens = settings?.screens || {};
+  return name ? screens[name] : Object.values(screens)[0];
+}
+
+async function build(state, screen) {
+  $('msg').style.display = 'none';
+  $('title').textContent = screen.title || '';
+  document.title = screen.title || state.meter.name;
+  const regs = state.registers;
+
+  $('screen').innerHTML = screen.rows.map((row) =>
+    `<div class="row" style="flex:${row.height}">${row.cells.map((c) => `<div class="cell" style="flex:${c.width}">${cellHtml(c, regs)}</div>`).join('')}</div>`).join('');
+
+  rows = [...$('screen').children].map((rowEl, r) => [...rowEl.children].map((el, i) => {
+    const def = screen.rows[r].cells[i];
+    return { def, el, value: el.querySelector('.value'), num: el.querySelector('.num'), unit: el.querySelector('.unit'),
+      bar: el.querySelector('.bar'), fill: el.querySelector('.bar i'), canvas: el.querySelector('canvas'), len: -1 };
+  }));
+
+  const windows = screen.rows.flatMap((r) => r.cells).filter((c) => c.type === 'chart').map((c) => c.window);
+  if (windows.length && Math.max(...windows) * 1000 > history.maxMs) await history.load(Math.max(...windows));
+  fitAll();
+}
+
+function cellHtml(c, regs) {
+  if (c.type === 'clock') {
+    return `<div class="head"><span class="label">${esc(c.label)}</span></div><div class="valbox"><div class="value clock"><span class="num"></span><span class="unit"></span></div></div>`;
+  }
+  if (c.type === 'chart') {
+    const keys = c.keys.filter((k) => regs[k]);
+    const legend = keys.length > 1 ? keys.map((k, i) => `<span style="--c:${MeterUI.seriesColor(k, i)}">${esc(regs[k].label)}</span>`).join('') : '';
+    return `<div class="head"><span class="label">${esc(c.label || (keys.length === 1 ? regs[keys[0]].label : ''))}</span><span class="legend">${legend}</span></div><canvas></canvas>`;
+  }
+  const reg = regs[c.key];
+  if (!reg) return `<div class="valbox missing">Licznik nie ma wartości „${esc(c.key)}”</div>`;
+  return `<div class="head"><span class="label">${esc(c.label || reg.label)}</span></div>
+    <div class="valbox"><div class="value"><span class="num">–</span><span class="unit"></span></div></div>
+    ${c.bar === false ? '' : '<div class="bar"><i></i></div>'}`;
+}
+
+// Wspólna wielkość liczb w obrębie wiersza – łatwiej porównywać.
+function fitAll() {
+  for (const row of rows) {
+    const list = row.filter((c) => c.value);
+    let scale = Infinity;
+    for (const c of list) {
+      const box = c.value.parentElement;
+      c.value.style.fontSize = '100px';
+      scale = Math.min(scale, box.clientWidth * 0.94 / c.value.scrollWidth, box.clientHeight * 0.9 / c.value.scrollHeight);
+    }
+    const size = Math.max(10, Math.floor(100 * scale)) + 'px';
+    for (const c of list) c.value.style.fontSize = size;
+  }
+}
+
+function render(state, fresh) {
+  const stale = MeterUI.isStale(state);
+  document.body.classList.toggle('stale', stale);
+  $('dot').className = 'dot ' + (state.ok && !stale ? 'ok' : 'err');
+  $('status').textContent = stale ? (state.error || 'brak aktualnych danych') : new Date(state.updated_at).toLocaleTimeString('pl-PL');
+
+  const settings = state.settings;
+  let refit = false;
+  for (const c of rows.flat()) {
+    if (c.def.type === 'chart') {
+      if (fresh) drawChart(c, state);
+      continue;
+    }
+    if (c.def.type === 'clock') { refit = updateClock(c) || refit; continue; }
+    const reg = state.registers[c.def.key];
+    if (!reg || !c.value) continue;
+
+    const raw = state.values?.[c.def.key] ?? null;
+    const s = MeterUI.scaled(raw, reg, c.def.kw);
+    const text = MeterUI.format(s.value, s.precision);
+    c.num.textContent = text;
+    c.unit.textContent = s.unit;
+
+    const t = settings?.thresholds?.[c.def.key];
+    const color = MeterUI.color(levelOf(c.def.key, raw, t), settings, c.def.key) || '#fff';
+    c.value.style.color = color;
+
+    // Pasek: od 0 (lub progu alarm_low) do progu alarmowego.
+    if (c.bar) {
+      const max = t?.alarm, min = t?.alarm_low ?? 0;
+      c.bar.style.visibility = max > min ? 'visible' : 'hidden';
+      if (max > min) {
+        const v = min === 0 ? Math.abs(raw ?? 0) : (raw ?? min);
+        c.fill.style.width = Math.max(0, Math.min(100, (v - min) / (max - min) * 100)) + '%';
+        c.fill.style.backgroundColor = color;
+      }
+    }
+
+    const len = text.length + s.unit.length;
+    if (len !== c.len) { c.len = len; refit = true; }
+  }
+  if (refit) fitAll();
+}
+
+function drawChart(c, state) {
+  drawMeterChart(c.canvas, history, {
+    keys: c.def.keys.filter((k) => state.registers[k]),
+    windowMs: c.def.window * 1000,
+    registers: state.registers,
+    kw: c.def.kw,
+    gapMs: state.interval * 3000 + 2000,
+    theme: CHART_THEME,
+  });
+}
+
+function updateClock(c) {
+  const text = new Date().toLocaleTimeString('pl-PL');
+  c.num.textContent = text;
+  if (text.length !== c.len) { c.len = text.length; return true; }
+  return false;
+}
+
+function showMessage(html, settings) {
+  const list = Object.entries(settings?.screens || {})
+    .map(([n, d]) => `<a href="../d/${esc(n)}">${esc(d.title || n)}</a>`).join(' · ');
+  $('msg').innerHTML = `<div>${html}${list ? `<br><br>Dostępne ekrany: ${list}` : ''}</div>`;
+  $('msg').style.display = 'flex';
+}
+
+async function poll() {
+  let interval = 1;
+  try {
+    const state = await (await fetch('../api.php', { cache: 'no-store' })).json();
+    if (!state.registers) throw new Error(state.error || 'Brak danych');
+    interval = state.interval;
+    if (state.settings_error) console.error(state.settings_error);
+
+    const screen = resolveScreen(state.settings);
+    const sig = JSON.stringify(screen ?? null);
+    const rebuilt = sig !== signature;
+    if (rebuilt) {
+      signature = sig;
+      rows = [];
+      if (screen) await build(state, screen);
+      else showMessage(`Nie ma ekranu „${esc(name)}”.`, state.settings);
+    }
+    const fresh = state.ok && state.values && history.push(state.updated_at, state.values);
+    lastState = state;
+    render(state, fresh || rebuilt);
+  } catch (e) {
+    document.body.classList.add('stale');
+    $('dot').className = 'dot err';
+    $('status').textContent = 'brak połączenia: ' + e.message;
+  }
+  setTimeout(poll, Math.min(5000, Math.max(250, interval * 1000)));
+}
+
+setInterval(() => {
+  let refit = false;
+  for (const c of rows.flat()) if (c.def.type === 'clock') refit = updateClock(c) || refit;
+  if (refit) fitAll();
+}, 1000);
+
+// Kliknięcie = pełny ekran; kursor znika po 3 s bez ruchu.
+document.addEventListener('click', () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+  else document.exitFullscreen?.();
+});
+let idleTimer;
+document.addEventListener('mousemove', () => {
+  document.body.classList.remove('idle');
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => document.body.classList.add('idle'), 3000);
+});
+window.addEventListener('resize', () => {
+  fitAll();
+  if (lastState) for (const c of rows.flat()) if (c.def.type === 'chart') drawChart(c, lastState);
+});
+
+// Nie wygaszaj ekranu (działa tylko przez HTTPS / localhost).
+async function keepAwake() {
+  try { await navigator.wakeLock?.request('screen'); } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && keepAwake());
+keepAwake();
+
+poll();
+</script>
+</body>
+</html>
